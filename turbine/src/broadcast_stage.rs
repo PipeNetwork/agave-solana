@@ -512,13 +512,18 @@ pub fn broadcast_shreds(
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
 
             shreds.filter_map(move |shred| {
+                // Best-effort: publish leader-produced shreds to SolanaCDN (if enabled).
+                // This is independent of whether the shred has an on-chain broadcast peer.
+                let payload = shred.payload();
+                crate::solanacdn_hooks::try_publish_leader_tvu_shred(payload.bytes.clone());
+
                 let key = shred.id();
                 let addr = cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(Protocol::UDP)
                     .filter(|addr| !addr.is_ipv6() && socket_addr_space.check(addr))?;
 
-                Some((shred.payload(), addr))
+                Some((payload, addr))
             })
         })
         .collect();
