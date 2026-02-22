@@ -411,10 +411,10 @@ impl BankingStage {
         let mut thread_hdls = Vec::with_capacity(num_workers.get() + 2);
         thread_hdls.push(Self::spawn_vote_worker(&context));
 
-        let receive_and_buffer = TransactionViewReceiveAndBuffer {
-            receiver: context.non_vote_receiver.clone(),
-            bank_forks: context.bank_forks.clone(),
-        };
+        let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
+            context.non_vote_receiver.clone(),
+            context.bank_forks.clone(),
+        );
         Self::spawn_scheduler_and_workers(
             &mut thread_hdls,
             receive_and_buffer,
@@ -454,10 +454,10 @@ impl BankingStage {
             context.exit_signal.store(false, Ordering::Relaxed);
             self.thread_hdls.push(Self::spawn_vote_worker(context));
 
-            let receive_and_buffer = TransactionViewReceiveAndBuffer {
-                receiver: context.non_vote_receiver.clone(),
-                bank_forks: context.bank_forks.clone(),
-            };
+            let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
+                context.non_vote_receiver.clone(),
+                context.bank_forks.clone(),
+            );
             Self::spawn_scheduler_and_workers(
                 &mut self.thread_hdls,
                 receive_and_buffer,
@@ -855,6 +855,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             replay_vote_sender,
@@ -918,6 +919,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             replay_vote_sender,
@@ -989,6 +991,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             replay_vote_sender,
@@ -1138,6 +1141,7 @@ mod tests {
                 DEFAULT_NUM_WORKERS,
                 SchedulerConfig {
                     scheduler_pacing: SchedulerPacing::Disabled,
+                    ..SchedulerConfig::default()
                 },
                 None,
                 replay_vote_sender,
@@ -1289,6 +1293,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             replay_vote_sender,

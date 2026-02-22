@@ -498,10 +498,7 @@ mod tests {
         receiver: BankingPacketReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> TransactionViewReceiveAndBuffer {
-        TransactionViewReceiveAndBuffer {
-            receiver,
-            bank_forks,
-        }
+        TransactionViewReceiveAndBuffer::new(receiver, bank_forks)
     }
 
     #[allow(clippy::type_complexity)]
