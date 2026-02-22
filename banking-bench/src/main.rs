@@ -469,6 +469,7 @@ fn main() {
         block_production_num_workers,
         SchedulerConfig {
             scheduler_pacing: SchedulerPacing::Disabled,
+            ..SchedulerConfig::default()
         },
         None,
         replay_vote_sender,
