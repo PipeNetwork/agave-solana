@@ -81,7 +81,6 @@ use {
         process::exit,
         str::FromStr,
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
 };
 
@@ -527,14 +526,6 @@ pub fn execute(
         UseSnapshotArchivesAtStartup
     );
 
-    let fast_shreds = matches.is_present("fast_shreds").then(|| {
-        solana_turbine::broadcast_stage::FastShredsConfig {
-            coalesce_duration: Duration::from_millis(5),
-            leader_fanout: 3,
-            prioritize_data_shreds: true,
-        }
-    });
-
     let solanacdn_pops: Vec<SocketAddr> =
         values_t!(matches, "solanacdn_pop", SocketAddr).unwrap_or_default();
     let solanacdn_control = value_t!(matches, "solanacdn_control", SocketAddr).ok();
@@ -711,7 +702,6 @@ pub fn execute(
         repair_whitelist,
         repair_handler_type: RepairHandlerType::default(),
         solanacdn,
-        fast_shreds,
         gossip_validators,
         max_ledger_shreds,
         blockstore_options: run_args.blockstore_options,
