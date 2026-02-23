@@ -83,7 +83,7 @@ rolling-file = { workspace = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 rustls = { workspace = true }
 rustls-native-certs = "0.8.1"
-webpki-roots = "1.0.0"
+webpki-roots = "1.0.6"
 ed25519-dalek-v2 = { package = "ed25519-dalek", version = "2.1.1", features = ["rand_core", "serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
