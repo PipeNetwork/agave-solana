@@ -6349,7 +6349,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.0",
+ "webpki-roots 1.0.6",
 ]
 
 [[package]]
@@ -8475,7 +8475,7 @@ dependencies = [
  "tokio-rustls 0.26.2",
  "tokio-util 0.7.16",
  "trees",
- "webpki-roots 1.0.0",
+ "webpki-roots 1.0.6",
 ]
 
 [[package]]
@@ -13801,9 +13801,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.0"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2853738d1cc4f2da3a225c18ec6c3721abb31961096e9dbf5ab35fa88b19cfdb"
+checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
 dependencies = [
  "rustls-pki-types",
 ]
