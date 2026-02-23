@@ -72,6 +72,7 @@ Dev-only escape hatch:
 ## Observability
 
 - Metrics + status: `--solanacdn-metrics-addr HOST:PORT` exposes Prometheus at `/metrics` and JSON status at `/solanacdn/status`.
+- Optional auth: `--solanacdn-metrics-auth-token TOKEN` (or env `SOLANACDN_METRICS_TOKEN`) requires `Authorization: Bearer TOKEN` or `?token=TOKEN`.
 - Admin RPC: `solanaCdnStatus` returns the same `SolanaCdnStatus` JSON.
 - In `--solanacdn-hybrid` mode, `tvu_shred_stale` / `tvu_shred_stale_for_ms` reflect time since the last shred accepted into the validator pipeline (compare with `last_shred_*` to diagnose delivery vs discard).
 - Race metrics (SolanaCDN vs gossip): enabled by default; disable with `--solanacdn-race=false`. Tune via `--solanacdn-race-sample-bits` and `--solanacdn-race-window-ms` (compatible with `--solanacdn-only` / `--solanacdn-hybrid`; does not change shred ingest mode).

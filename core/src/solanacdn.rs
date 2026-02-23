@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Semaphore};
 
 use solana_keypair::Keypair;
 use solana_ledger::shred::ShredId as LedgerShredId;
@@ -29,6 +29,7 @@ use solana_packet::PACKET_DATA_SIZE;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_sha256_hasher as sha256_hasher;
+use solana_transaction::versioned::VersionedTransaction;
 
 use solanacdn_protocol::crypto::{random_nonce_16, PubkeyBytes};
 use solanacdn_protocol::frame::{
@@ -65,6 +66,8 @@ const VOTES_MAX_FRAME_BYTES: usize = 256 * 1024;
 
 // Bound CPU/memory for decoding large multi-shred batches.
 const PUSH_SHRED_BATCH_MAX_SHREDS: usize = 4_096;
+// Max UDP payload size; large enough to avoid truncation for valid datagrams.
+const UDP_RECV_BUF_BYTES: usize = 64 * 1024;
 
 const SCDN_PROTOCOL_VIOLATION_CLOSE_CODE: u32 = 1;
 
@@ -315,6 +318,8 @@ pub struct SolanaCdnConfig {
 
     /// Optional Prometheus/HTTP status listener for SolanaCDN integration.
     pub metrics_listen_addr: Option<SocketAddr>,
+    /// Optional auth token required for metrics/status endpoints.
+    pub metrics_auth_token: Option<String>,
 
     /// If enabled, measure “race” outcomes between SolanaCDN-delivered shreds and gossip shreds.
     /// This requires ingesting shreds from both paths (do not use `--solanacdn-only`/hybrid).
@@ -367,6 +372,7 @@ impl SolanaCdnConfig {
             pipe_api_tls_ca_cert_path: None,
             pipe_api_tls_bootstrap: false,
             metrics_listen_addr: None,
+            metrics_auth_token: None,
             race_enabled: true,
             race_sample_bits: 12,
             race_window_ms: 5_000,
@@ -408,6 +414,7 @@ impl Default for SolanaCdnConfig {
             pipe_api_tls_ca_cert_path: None,
             pipe_api_tls_bootstrap: false,
             metrics_listen_addr: None,
+            metrics_auth_token: None,
             race_enabled: true,
             race_sample_bits: 12,
             race_window_ms: 5_000,
@@ -493,6 +500,12 @@ impl VoteInjectSockets {
 enum UplinkMsg {
     Shred(ShredPublish),
     Vote(VotePublish),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UdpDatagramKind {
+    Shreds,
+    Votes,
 }
 
 #[derive(Clone, Debug)]
@@ -941,6 +954,10 @@ pub struct SolanaCdnStatus {
     pub dropped_udp_shreds_unexpected_msg_total: u64,
     pub dropped_udp_votes_unexpected_peer_total: u64,
     pub dropped_udp_votes_unexpected_msg_total: u64,
+    pub dropped_udp_shreds_truncated_total: u64,
+    pub dropped_udp_votes_truncated_total: u64,
+    pub shred_batch_id_mismatch_total: u64,
+    pub dropped_relay_tx_invalid_total: u64,
     pub vote_tunnel_allowed_dsts_len: u64,
     pub last_shred_slot: Option<u64>,
     pub last_shred_timestamp_ms: Option<u64>,
@@ -996,6 +1013,10 @@ pub struct SolanaCdnHandle {
     dropped_udp_shreds_unexpected_msg: AtomicU64,
     dropped_udp_votes_unexpected_peer: AtomicU64,
     dropped_udp_votes_unexpected_msg: AtomicU64,
+    dropped_udp_shreds_truncated: AtomicU64,
+    dropped_udp_votes_truncated: AtomicU64,
+    shred_batch_id_mismatch: AtomicU64,
+    dropped_relay_tx_invalid: AtomicU64,
     uplink_broadcast_lagged: AtomicU64,
     pop_endpoint_ips: DashSet<IpAddr>,
     pop_egress_ips: DashMap<IpAddr, u64>,
@@ -1046,6 +1067,10 @@ impl SolanaCdnHandle {
             dropped_udp_shreds_unexpected_msg: AtomicU64::new(0),
             dropped_udp_votes_unexpected_peer: AtomicU64::new(0),
             dropped_udp_votes_unexpected_msg: AtomicU64::new(0),
+            dropped_udp_shreds_truncated: AtomicU64::new(0),
+            dropped_udp_votes_truncated: AtomicU64::new(0),
+            shred_batch_id_mismatch: AtomicU64::new(0),
+            dropped_relay_tx_invalid: AtomicU64::new(0),
             uplink_broadcast_lagged: AtomicU64::new(0),
             pop_endpoint_ips: DashSet::new(),
             pop_egress_ips: DashMap::new(),
@@ -1171,8 +1196,28 @@ impl SolanaCdnHandle {
         }
     }
 
+    fn note_udp_truncation(&self, kind: UdpDatagramKind, len: usize, buf_len: usize) {
+        if len < buf_len {
+            return;
+        }
+        match kind {
+            UdpDatagramKind::Shreds => {
+                self.dropped_udp_shreds_truncated
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            UdpDatagramKind::Votes => {
+                self.dropped_udp_votes_truncated
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
+    }
+
+    fn metrics_auth_token(&self) -> Option<&str> {
+        self.cfg.metrics_auth_token.as_deref()
     }
 
     pub fn publish_shreds_enabled(&self) -> bool {
@@ -1603,6 +1648,14 @@ impl SolanaCdnHandle {
         let dropped_udp_votes_unexpected_msg_total = self
             .dropped_udp_votes_unexpected_msg
             .load(Ordering::Relaxed);
+        let dropped_udp_shreds_truncated_total = self
+            .dropped_udp_shreds_truncated
+            .load(Ordering::Relaxed);
+        let dropped_udp_votes_truncated_total = self
+            .dropped_udp_votes_truncated
+            .load(Ordering::Relaxed);
+        let shred_batch_id_mismatch_total = self.shred_batch_id_mismatch.load(Ordering::Relaxed);
+        let dropped_relay_tx_invalid_total = self.dropped_relay_tx_invalid.load(Ordering::Relaxed);
         let vote_tunnel_allowed_dsts_len = self.vote_tunnel_allowed_dsts.len() as u64;
 
         let (rx_shred_payloads_per_sec, tunneled_vote_packets_per_sec) = {
@@ -1709,6 +1762,10 @@ impl SolanaCdnHandle {
             dropped_udp_shreds_unexpected_msg_total,
             dropped_udp_votes_unexpected_peer_total,
             dropped_udp_votes_unexpected_msg_total,
+            dropped_udp_shreds_truncated_total,
+            dropped_udp_votes_truncated_total,
+            shred_batch_id_mismatch_total,
+            dropped_relay_tx_invalid_total,
             vote_tunnel_allowed_dsts_len,
             last_shred_slot,
             last_shred_timestamp_ms,
@@ -1871,11 +1928,15 @@ impl SolanaCdnHandle {
             "dropped_udp_shreds_unexpected_msg_total": self.dropped_udp_shreds_unexpected_msg.load(Ordering::Relaxed) as i64,
             "dropped_udp_votes_unexpected_peer_total": self.dropped_udp_votes_unexpected_peer.load(Ordering::Relaxed) as i64,
             "dropped_udp_votes_unexpected_msg_total": self.dropped_udp_votes_unexpected_msg.load(Ordering::Relaxed) as i64,
+            "dropped_udp_shreds_truncated_total": self.dropped_udp_shreds_truncated.load(Ordering::Relaxed) as i64,
+            "dropped_udp_votes_truncated_total": self.dropped_udp_votes_truncated.load(Ordering::Relaxed) as i64,
+            "shred_batch_id_mismatch_total": self.shred_batch_id_mismatch.load(Ordering::Relaxed) as i64,
             "vote_tunnel_allowed_dsts_len": self.vote_tunnel_allowed_dsts.len() as i64,
             "rx_tx_packets_total": self.rx_tx_packets.load(Ordering::Relaxed) as i64,
             "tx_injected_packets_total": self.tx_injected_packets.load(Ordering::Relaxed) as i64,
             "tx_deduped_packets_total": self.tx_deduped_packets.load(Ordering::Relaxed) as i64,
             "tx_inject_failed_total": self.tx_inject_failed.load(Ordering::Relaxed) as i64,
+            "dropped_relay_tx_invalid_total": self.dropped_relay_tx_invalid.load(Ordering::Relaxed) as i64,
             "uplink_dropped_shred_batches_total": self.dropped_shred_payloads.load(Ordering::Relaxed) as i64,
             "uplink_broadcast_lagged_total": self.uplink_broadcast_lagged.load(Ordering::Relaxed) as i64,
         })
@@ -2873,6 +2934,10 @@ mod tests {
         call_handle_pop_msg(&mut h, PopToAgent::RelayTransaction(tx)).await;
         assert_eq!(h.handle.rx_tx_packets.load(Ordering::Relaxed), 1);
         assert_eq!(h.handle.tx_inject_failed.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            h.handle.dropped_relay_tx_invalid.load(Ordering::Relaxed),
+            1
+        );
     }
 
     #[tokio::test]
@@ -2954,6 +3019,33 @@ mod tests {
         assert_eq!(h.handle.pushed_shred_batches.load(Ordering::Relaxed), 1);
         assert_eq!(h.handle.rx_shred_payloads.load(Ordering::Relaxed), 0);
         assert_eq!(h.handle.rx_shred_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_pop_msg_shred_batch_id_mismatch_dedup() {
+        let cfg = SolanaCdnConfig::default();
+        let mut h = setup_pop_msg_harness(cfg).await;
+
+        let make_batch = |batch_id| ShredBatch {
+            batch_id,
+            created_at_ms: now_ms(),
+            shreds: vec![Shred {
+                id: ShredId { slot: 1, index: 0 },
+                kind: ShredKind::Tvu,
+                payload: vec![9u8; 32],
+            }],
+        };
+        let computed = compute_shred_batch_id_from_shreds(&make_batch(0).shreds);
+        let batch = make_batch(computed.wrapping_add(1));
+
+        call_handle_pop_msg(&mut h, PopToAgent::PushShredBatch(batch.clone())).await;
+        call_handle_pop_msg(&mut h, PopToAgent::PushShredBatch(batch)).await;
+
+        assert_eq!(
+            h.handle.shred_batch_id_mismatch.load(Ordering::Relaxed),
+            2
+        );
+        assert_eq!(h.handle.pushed_shred_batches.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -3268,6 +3360,54 @@ mod tests {
         big.extend(vec![b'A'; METRICS_HTTP_MAX_REQUEST_BYTES + 1]);
         let resp = send_metrics_request(handle, &big).await;
         assert!(resp.contains("413 Payload Too Large"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_metrics_conn_auth() {
+        let mut cfg = SolanaCdnConfig::default();
+        cfg.metrics_auth_token = Some("secret".to_string());
+        let handle = new_handle_for_tests(cfg);
+        handle.connected.store(true, Ordering::Relaxed);
+
+        let resp = send_metrics_request(
+            handle.clone(),
+            b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )
+        .await;
+        assert!(resp.contains("401 Unauthorized"));
+
+        let resp = send_metrics_request(
+            handle.clone(),
+            b"GET /metrics?token=secret HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        )
+        .await;
+        assert!(resp.contains("200 OK"));
+
+        let resp = send_metrics_request(
+            handle,
+            b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret\r\n\r\n",
+        )
+        .await;
+        assert!(resp.contains("200 OK"));
+    }
+
+    #[test]
+    fn test_note_udp_truncation_counters() {
+        let handle = new_handle_for_tests(SolanaCdnConfig::default());
+        handle.note_udp_truncation(UdpDatagramKind::Shreds, 2048, 1024);
+        handle.note_udp_truncation(UdpDatagramKind::Votes, 10, 1024);
+        assert_eq!(
+            handle
+                .dropped_udp_shreds_truncated
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            handle
+                .dropped_udp_votes_truncated
+                .load(Ordering::Relaxed),
+            0
+        );
     }
 
     #[test]
@@ -3868,7 +4008,7 @@ mod tests {
                 }
             });
 
-            let mut buf = vec![0u8; 2048];
+            let mut buf = vec![0u8; UDP_RECV_BUF_BYTES];
             let (len, _) = pop_shreds_sock
                 .recv_from(&mut buf)
                 .await
@@ -4119,11 +4259,13 @@ pub fn init(
 
     let handle = Arc::new(SolanaCdnHandle::new(cfg.clone()));
     GLOBAL.store(Some(handle.clone()));
-    let _ = solana_turbine::solanacdn_hooks::set_leader_tvu_shred_publisher(Arc::new(
+    if !solana_turbine::solanacdn_hooks::set_leader_tvu_shred_publisher(Arc::new(
         AgaveLeaderTvuShredPublisher {
             handle: handle.clone(),
         },
-    ));
+    )) {
+        warn!("solanacdn: leader shred publisher already set; SolanaCDN leader shreds will not be published");
+    }
 
     let thread_cfg = cfg.clone();
     std::thread::Builder::new()
@@ -5289,6 +5431,25 @@ fn compute_shred_batch_id(items: &[(ShredKind, Bytes)]) -> u128 {
     hash
 }
 
+fn compute_shred_batch_id_from_shreds(shreds: &[Shred]) -> u128 {
+    let mut hash = FNV1A_128_OFFSET_BASIS;
+    hash = fnv1a_128_update(
+        hash,
+        &u32::try_from(shreds.len()).unwrap_or(u32::MAX).to_le_bytes(),
+    );
+    for shred in shreds {
+        hash = fnv1a_128_update(hash, &[shred_kind_tag(shred.kind)]);
+        hash = fnv1a_128_update(
+            hash,
+            &u32::try_from(shred.payload.len())
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
+        hash = fnv1a_128_update(hash, shred.payload.as_slice());
+    }
+    hash
+}
+
 fn vote_flow_id(dst: &SocketAddr) -> u64 {
     let mut h = DefaultHasher::new();
     dst.hash(&mut h);
@@ -5580,9 +5741,61 @@ where
 }
 
 const METRICS_HTTP_MAX_REQUEST_BYTES: usize = 8 * 1024;
+const METRICS_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const METRICS_HTTP_MAX_CONNECTIONS: usize = 64;
 
 fn prometheus_escape_label_value(value: &str) -> String {
     value.replace('\\', r"\\").replace('"', r#"\""#)
+}
+
+fn metrics_query_token(path: &str) -> Option<&str> {
+    let (_path, query) = path.split_once('?')?;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=')?;
+        if k == "token" {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn metrics_header_value<'a>(req: &'a str, header: &str) -> Option<&'a str> {
+    for line in req.lines().skip(1) {
+        let line = line.trim();
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case(header) {
+            return Some(value.trim());
+        }
+    }
+    None
+}
+
+fn metrics_authorized(req: &str, path: &str, expected: &str) -> bool {
+    if let Some(token) = metrics_query_token(path) {
+        if token == expected {
+            return true;
+        }
+    }
+    if let Some(header) = metrics_header_value(req, "authorization") {
+        let token = header
+            .strip_prefix("Bearer ")
+            .or_else(|| header.strip_prefix("bearer "))
+            .unwrap_or(header);
+        if token == expected {
+            return true;
+        }
+    }
+    if let Some(token) = metrics_header_value(req, "x-solanacdn-token") {
+        if token == expected {
+            return true;
+        }
+    }
+    false
 }
 
 fn histogram_quantile_seconds(
@@ -5797,6 +6010,13 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
         status.dropped_udp_shreds_unexpected_msg_total
     ));
 
+    out.push_str("# HELP solanacdn_udp_shreds_dropped_truncated_total UDP shred datagrams dropped due to truncation\n");
+    out.push_str("# TYPE solanacdn_udp_shreds_dropped_truncated_total counter\n");
+    out.push_str(&format!(
+        "solanacdn_udp_shreds_dropped_truncated_total {}\n",
+        status.dropped_udp_shreds_truncated_total
+    ));
+
     out.push_str("# HELP solanacdn_udp_votes_dropped_unexpected_peer_total UDP vote datagrams dropped due to unexpected peer IP\n");
     out.push_str("# TYPE solanacdn_udp_votes_dropped_unexpected_peer_total counter\n");
     out.push_str(&format!(
@@ -5809,6 +6029,27 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
     out.push_str(&format!(
         "solanacdn_udp_votes_dropped_unexpected_msg_total {}\n",
         status.dropped_udp_votes_unexpected_msg_total
+    ));
+
+    out.push_str("# HELP solanacdn_udp_votes_dropped_truncated_total UDP vote datagrams dropped due to truncation\n");
+    out.push_str("# TYPE solanacdn_udp_votes_dropped_truncated_total counter\n");
+    out.push_str(&format!(
+        "solanacdn_udp_votes_dropped_truncated_total {}\n",
+        status.dropped_udp_votes_truncated_total
+    ));
+
+    out.push_str("# HELP solanacdn_shred_batch_id_mismatch_total Shred batches with mismatched batch_id values\n");
+    out.push_str("# TYPE solanacdn_shred_batch_id_mismatch_total counter\n");
+    out.push_str(&format!(
+        "solanacdn_shred_batch_id_mismatch_total {}\n",
+        status.shred_batch_id_mismatch_total
+    ));
+
+    out.push_str("# HELP solanacdn_relay_tx_invalid_total RelayTransaction payloads dropped due to invalid encoding\n");
+    out.push_str("# TYPE solanacdn_relay_tx_invalid_total counter\n");
+    out.push_str(&format!(
+        "solanacdn_relay_tx_invalid_total {}\n",
+        status.dropped_relay_tx_invalid_total
     ));
 
     if let Some(slot) = status.last_shred_slot {
@@ -6139,9 +6380,9 @@ async fn handle_metrics_conn(mut stream: TcpStream, handle: Arc<SolanaCdnHandle>
     let mut buf = [0u8; 1024];
     let mut req = Vec::new();
     loop {
-        match stream.read(&mut buf).await {
-            Ok(0) => return,
-            Ok(n) => {
+        match tokio::time::timeout(METRICS_HTTP_READ_TIMEOUT, stream.read(&mut buf)).await {
+            Ok(Ok(0)) => return,
+            Ok(Ok(n)) => {
                 req.extend_from_slice(&buf[..n]);
                 if req.len() > METRICS_HTTP_MAX_REQUEST_BYTES {
                     write_http_response(
@@ -6157,7 +6398,17 @@ async fn handle_metrics_conn(mut stream: TcpStream, handle: Arc<SolanaCdnHandle>
                     break;
                 }
             }
-            Err(_) => return,
+            Ok(Err(_)) => return,
+            Err(_) => {
+                write_http_response(
+                    &mut stream,
+                    "408 Request Timeout",
+                    "text/plain; charset=utf-8",
+                    b"request timeout\n",
+                )
+                .await;
+                return;
+            }
         }
     }
 
@@ -6166,6 +6417,20 @@ async fn handle_metrics_conn(mut stream: TcpStream, handle: Arc<SolanaCdnHandle>
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let path = parts.next().unwrap_or_default();
+    let (path_only, _query) = path.split_once('?').unwrap_or((path, ""));
+
+    if let Some(expected) = handle.metrics_auth_token() {
+        if !metrics_authorized(&req_str, path, expected) {
+            write_http_response(
+                &mut stream,
+                "401 Unauthorized",
+                "text/plain; charset=utf-8",
+                b"unauthorized\n",
+            )
+            .await;
+            return;
+        }
+    }
 
     if method != "GET" {
         write_http_response(
@@ -6178,7 +6443,7 @@ async fn handle_metrics_conn(mut stream: TcpStream, handle: Arc<SolanaCdnHandle>
         return;
     }
 
-    match path {
+    match path_only {
         "/metrics" => {
             let body = format_prometheus_metrics(handle.as_ref());
             write_http_response(
@@ -6220,6 +6485,7 @@ async fn run_metrics_server(
     let listener = TcpListener::bind(listen_addr).await?;
     let bound = listener.local_addr()?;
     info!("solanacdn: metrics listening on http://{bound}/metrics");
+    let semaphore = Arc::new(Semaphore::new(METRICS_HTTP_MAX_CONNECTIONS));
 
     loop {
         if exit.load(Ordering::Relaxed) {
@@ -6233,7 +6499,27 @@ async fn run_metrics_server(
             Ok(v) => v,
             Err(_) => continue,
         };
-        tokio::spawn(handle_metrics_conn(stream, handle.clone()));
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tokio::spawn(async move {
+                    let mut stream = stream;
+                    write_http_response(
+                        &mut stream,
+                        "503 Service Unavailable",
+                        "text/plain; charset=utf-8",
+                        b"busy\n",
+                    )
+                    .await;
+                });
+                continue;
+            }
+        };
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            handle_metrics_conn(stream, handle).await;
+        });
     }
 }
 
@@ -7309,7 +7595,7 @@ async fn run_pop_session(
         let handle = handle.clone();
         let ctrl_out_tx = ctrl_out_tx.clone();
         Some(tokio::spawn(async move {
-            let mut buf = vec![0u8; 2048];
+            let mut buf = vec![0u8; UDP_RECV_BUF_BYTES];
             let mut fec: HashMap<u64, (solanacdn_protocol::fec::RaptorqDecoder, u64)> =
                 HashMap::new();
             let mut last_cleanup_ms = now_ms();
@@ -7330,6 +7616,8 @@ async fn run_pop_session(
                             Ok(v) => v,
                             Err(_) => return,
                         };
+                        handle.note_udp_truncation(UdpDatagramKind::Shreds, len, buf.len());
+                        handle.note_udp_truncation(UdpDatagramKind::Votes, len, buf.len());
                         let bytes = &buf[..len];
                         if !bytes.starts_with(&udp_token) {
                             continue;
@@ -7712,7 +8000,20 @@ async fn handle_pop_msg(
                     .fetch_add(1, Ordering::Relaxed);
                 return;
             }
-            if !shred_deduper.insert_if_new(batch.batch_id) {
+            let computed_batch_id = compute_shred_batch_id_from_shreds(&batch.shreds);
+            let batch_id = if computed_batch_id != batch.batch_id {
+                handle
+                    .shred_batch_id_mismatch
+                    .fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "solanacdn: shred batch id mismatch from {endpoint}: expected={} got={}",
+                    computed_batch_id, batch.batch_id
+                );
+                computed_batch_id
+            } else {
+                batch.batch_id
+            };
+            if !shred_deduper.insert_if_new(batch_id) {
                 return;
             }
             handle.pushed_shred_batches.fetch_add(1, Ordering::Relaxed);
@@ -7806,10 +8107,25 @@ async fn handle_pop_msg(
                 handle.tx_inject_failed.fetch_add(1, Ordering::Relaxed);
                 return;
             }
+            if bincode::deserialize::<VersionedTransaction>(tx.payload.as_slice()).is_err() {
+                debug!("solanacdn: dropping relay tx {}: invalid encoding", tx.tx_id);
+                handle
+                    .dropped_relay_tx_invalid
+                    .fetch_add(1, Ordering::Relaxed);
+                handle.tx_inject_failed.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
             // Transactions may be routed via multiple POPs (home-POP forwarding, multi-POP, etc),
             // so do not gate this on the current shred/vote publisher selection.
             let now = now_ms();
             let Some(sig) = try_first_signature_bytes_from_wire_tx(tx.payload.as_slice()) else {
+                debug!(
+                    "solanacdn: dropping relay tx {}: missing signature bytes",
+                    tx.tx_id
+                );
+                handle
+                    .dropped_relay_tx_invalid
+                    .fetch_add(1, Ordering::Relaxed);
                 handle.tx_inject_failed.fetch_add(1, Ordering::Relaxed);
                 return;
             };

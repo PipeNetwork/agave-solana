@@ -648,6 +648,12 @@ pub fn execute(
             cfg.vote_dedup_max_entries = if v == 0 { 0 } else { v.min(2_000_000) };
         }
         cfg.metrics_listen_addr = value_t!(matches, "solanacdn_metrics_addr", SocketAddr).ok();
+        cfg.metrics_auth_token = matches
+            .value_of("solanacdn_metrics_auth_token")
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("SOLANACDN_METRICS_TOKEN").ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         cfg.race_enabled = matches
             .value_of("solanacdn_race")

@@ -1582,6 +1582,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Expose SolanaCDN Prometheus metrics at http://HOST:PORT/metrics and JSON status at /solanacdn/status (recommended: 127.0.0.1:9100)"),
     )
     .arg(
+        Arg::with_name("solanacdn_metrics_auth_token")
+            .long("solanacdn-metrics-auth-token")
+            .value_name("TOKEN")
+            .takes_value(true)
+            .help("Require a token for SolanaCDN metrics/status endpoints (Authorization: Bearer TOKEN or ?token=TOKEN)"),
+    )
+    .arg(
         Arg::with_name("solanacdn_no_subscribe")
             .long("solanacdn-no-subscribe")
             .takes_value(false)

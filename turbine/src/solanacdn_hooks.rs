@@ -22,3 +22,22 @@ pub fn try_publish_leader_tvu_shred(payload: Bytes) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    struct NoopPublisher;
+
+    impl LeaderTvuShredPublisher for NoopPublisher {
+        fn publish_tvu_shred(&self, _payload: Bytes) {}
+    }
+
+    #[test]
+    fn test_set_leader_tvu_shred_publisher_double_set() {
+        let first = set_leader_tvu_shred_publisher(Arc::new(NoopPublisher));
+        let second = set_leader_tvu_shred_publisher(Arc::new(NoopPublisher));
+        assert!(first);
+        assert!(!second);
+    }
+}
