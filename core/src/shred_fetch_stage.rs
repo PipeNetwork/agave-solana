@@ -557,7 +557,7 @@ mod tests {
         super::*,
         crate::{
             repair::serve_repair::ShredRepairType,
-            solanacdn::{new_handle_for_tests, set_global_for_tests, SolanaCdnConfig},
+            solanacdn::{global_test_lock, new_handle_for_tests, set_global_for_tests, SolanaCdnConfig},
         },
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -580,6 +580,7 @@ mod tests {
     }
 
     fn run_repair_flag_case(repair_shreds: bool) -> Option<bool> {
+        let _lock = global_test_lock().lock().unwrap();
         let mut cfg = SolanaCdnConfig::default();
         cfg.repair_shreds = repair_shreds;
         let handle = new_handle_for_tests(cfg);

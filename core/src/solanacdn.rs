@@ -4,8 +4,7 @@ use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwapOption;
@@ -1978,6 +1977,15 @@ pub(crate) fn set_global_for_tests(handle: Option<Arc<SolanaCdnHandle>>) {
 }
 
 #[cfg(test)]
+static GLOBAL_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn global_test_lock() -> &'static std::sync::Mutex<()> {
+    GLOBAL_TEST_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
 pub(crate) fn new_handle_for_tests(cfg: SolanaCdnConfig) -> Arc<SolanaCdnHandle> {
     Arc::new(SolanaCdnHandle::new(cfg))
 }
@@ -3423,6 +3431,7 @@ mod tests {
 
     #[test]
     fn test_init_skips_when_no_config() {
+        let _guard = global_test_lock().lock().unwrap();
         let saved_agent = save_env("SOLANACDN_AGENT_API_TOKEN");
         let saved_pipe = save_env("PIPE_API_KEY");
         std::env::remove_var("SOLANACDN_AGENT_API_TOKEN");
@@ -3451,6 +3460,7 @@ mod tests {
 
     #[test]
     fn test_init_skips_when_features_disabled() {
+        let _guard = global_test_lock().lock().unwrap();
         set_global_for_tests(None);
         let addr: SocketAddr = "127.0.0.1:1234".parse().unwrap();
         let mut cfg = SolanaCdnConfig::new(addr);
