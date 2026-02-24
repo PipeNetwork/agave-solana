@@ -33,6 +33,10 @@ If you have a Pipe API key, you can enable SolanaCDN without specifying POP endp
 
 The validator verifies the API key via `POST /v1/solanacdn-agent/verify` and uses the returned POP list.
 
+The validator will also periodically re-run verify (and after publisher failover / when disconnected
+from all POPs) to pick up new POPs without requiring a restart. Tune with
+`--solanacdn-api-verify-refresh-ms` (set `0` to disable).
+
 For scalability and blast-radius reduction, the Pipe API can return a **per-node assigned subset** of
 active POPs (instead of returning all POPs globally to every client). The validator will only
 connect to the returned subset.

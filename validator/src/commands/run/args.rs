@@ -162,8 +162,7 @@ impl FromClapArgMatches for RunArgs {
         if (matches.is_present("solanacdn_only")
             || matches.is_present("solanacdn_hybrid")
             || solanacdn_race_requested
-            || matches.is_present("solanacdn_no_repair")
-        )
+            || matches.is_present("solanacdn_no_repair"))
             && !has_solanacdn_discovery
         {
             return Err(clap::Error::with_description(
@@ -1486,6 +1485,15 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Pipe API HTTP timeout (ms) for session token refresh"),
     )
     .arg(
+        Arg::with_name("solanacdn_api_verify_refresh_ms")
+            .long("solanacdn-api-verify-refresh-ms")
+            .value_name("MILLISECONDS")
+            .takes_value(true)
+            .validator(is_parsable::<u64>)
+            .default_value("3600000")
+            .help("Pipe API POP discovery refresh interval (ms) via /v1/solanacdn-agent/verify (0 disables)"),
+    )
+    .arg(
         Arg::with_name("solanacdn_api_tls_ca_cert_path")
             .long("solanacdn-api-tls-ca-cert-path")
             .value_name("FILE")
@@ -1824,7 +1832,11 @@ mod tests {
         let default_run_args = RunArgs::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args.clone(),
-            vec!["--solanacdn-api-token", "pk_test_dummy", "--solanacdn-hybrid"],
+            vec![
+                "--solanacdn-api-token",
+                "pk_test_dummy",
+                "--solanacdn-hybrid",
+            ],
             default_run_args,
         );
     }

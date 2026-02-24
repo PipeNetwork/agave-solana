@@ -34,8 +34,8 @@ use {
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
-        solanacdn::SolanaCdnConfig,
         snapshot_packager_service::SnapshotPackagerService,
+        solanacdn::SolanaCdnConfig,
         system_monitor_service::SystemMonitorService,
         tpu::MAX_VOTES_PER_SECOND,
         validator::{
@@ -606,6 +606,8 @@ pub fn execute(
         cfg.pipe_api_timeout_ms = value_t!(matches, "solanacdn_api_timeout_ms", u64)
             .unwrap_or(2_000)
             .max(250);
+        cfg.pipe_api_verify_refresh_ms =
+            value_t!(matches, "solanacdn_api_verify_refresh_ms", u64).unwrap_or(3_600_000);
         cfg.pipe_api_tls_ca_cert_path = matches
             .value_of("solanacdn_api_tls_ca_cert_path")
             .map(PathBuf::from);
