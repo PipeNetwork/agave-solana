@@ -85,9 +85,13 @@ impl FromClapArgMatches for RpcBootstrapConfig {
                 .unwrap_or(DEFAULT_SNAPSHOT_MANIFEST_URL)
                 .trim()
                 .to_string(),
-            snapshot_download_concurrency: value_t!(matches, "snapshot_download_concurrency", usize)
-                .unwrap_or_else(|_| DEFAULT_SNAPSHOT_DOWNLOAD_CONCURRENCY.parse().unwrap())
-                .max(1),
+            snapshot_download_concurrency: value_t!(
+                matches,
+                "snapshot_download_concurrency",
+                usize
+            )
+            .unwrap_or_else(|_| DEFAULT_SNAPSHOT_DOWNLOAD_CONCURRENCY.parse().unwrap())
+            .max(1),
             snapshot_download_chunk_size_bytes: value_t!(
                 matches,
                 "snapshot_download_chunk_size_bytes",
@@ -143,7 +147,10 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .long("bootstrap-rpc-addrs-url")
             .value_name("URL")
             .takes_value(true)
-            .help("Fetch bootstrap RPC nodes from a URL that returns JSON array/object of socket addresses"),
+            .help(
+                "Fetch bootstrap RPC nodes from a URL that returns JSON array/object of socket \
+                 addresses",
+            ),
         Arg::with_name("max_genesis_archive_unpacked_size")
             .long("max-genesis-archive-unpacked-size")
             .value_name("NUMBER")

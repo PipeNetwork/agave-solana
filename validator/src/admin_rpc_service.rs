@@ -207,7 +207,8 @@ pub trait AdminRpc {
     fn start_progress(&self, meta: Self::Metadata) -> Result<ValidatorStartProgress>;
 
     #[rpc(meta, name = "solanaCdnStatus")]
-    fn solana_cdn_status(&self, meta: Self::Metadata) -> Result<Option<solanacdn::SolanaCdnStatus>>;
+    fn solana_cdn_status(&self, meta: Self::Metadata)
+    -> Result<Option<solanacdn::SolanaCdnStatus>>;
 
     #[rpc(meta, name = "addAuthorizedVoter")]
     fn add_authorized_voter(&self, meta: Self::Metadata, keypair_file: String) -> Result<()>;
@@ -536,7 +537,10 @@ impl AdminRpc for AdminRpcImpl {
         Ok(*meta.start_progress.read().unwrap())
     }
 
-    fn solana_cdn_status(&self, _meta: Self::Metadata) -> Result<Option<solanacdn::SolanaCdnStatus>> {
+    fn solana_cdn_status(
+        &self,
+        _meta: Self::Metadata,
+    ) -> Result<Option<solanacdn::SolanaCdnStatus>> {
         debug!("solana_cdn_status admin rpc request received");
         Ok(solanacdn::global().map(|h| h.status_snapshot()))
     }
@@ -1271,9 +1275,7 @@ mod tests {
         let RpcHandler { io, meta, .. } = rpc;
 
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"solanaCdnStatus"}"#;
-        let res = io
-            .handle_request_sync(req, meta)
-            .expect("actual response");
+        let res = io.handle_request_sync(req, meta).expect("actual response");
         let value: Value = serde_json::from_str(&res).expect("json response");
 
         assert!(

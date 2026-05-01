@@ -1,5 +1,7 @@
-use bytes::Bytes;
-use std::sync::{Arc, OnceLock};
+use {
+    bytes::Bytes,
+    std::sync::{Arc, OnceLock},
+};
 
 /// Hook for broadcasting leader-produced TVU shreds to an external system (e.g. SolanaCDN).
 ///

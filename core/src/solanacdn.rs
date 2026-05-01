@@ -1,43 +1,48 @@
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
-use std::hash::{Hash, Hasher};
-use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::sync::Once;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use arc_swap::ArcSwapOption;
-use bytes::Bytes;
-use dashmap::{DashMap, DashSet};
-use ed25519_dalek_v2::SigningKey;
-use quinn::Endpoint;
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{DigitallySignedStruct, RootCertStore, SignatureScheme};
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, watch};
-
-use solana_keypair::Keypair;
-use solana_ledger::shred::ShredId as LedgerShredId;
-use solana_packet::PACKET_DATA_SIZE;
-use solana_pubkey::Pubkey;
-use solana_signer::Signer;
-use solana_sha256_hasher as sha256_hasher;
-
-use solanacdn_protocol::crypto::{random_nonce_16, PubkeyBytes};
-use solanacdn_protocol::frame::{
-    decode_envelope, encode_envelope, FrameError, DEFAULT_MAX_FRAME_BYTES,
-};
-use solanacdn_protocol::messages::{
-    AgentToPop, AuthRefresh, AuthRequest, AuthRequestPayload, AuthWithSessionToken,
-    ControlRequest, ControlResponse, Heartbeat, HeartbeatStats, PopToAgent, Shred, ShredBatch,
-    ShredId, ShredKind, StreamKind, VoteDatagram,
+use {
+    arc_swap::ArcSwapOption,
+    bytes::Bytes,
+    dashmap::{DashMap, DashSet},
+    ed25519_dalek_v2::SigningKey,
+    quinn::Endpoint,
+    rustls::{
+        DigitallySignedStruct, RootCertStore, SignatureScheme,
+        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
+    },
+    serde::{Deserialize, Serialize},
+    solana_keypair::Keypair,
+    solana_ledger::shred::ShredId as LedgerShredId,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_sha256_hasher as sha256_hasher,
+    solana_signer::Signer,
+    solanacdn_protocol::{
+        crypto::{PubkeyBytes, random_nonce_16},
+        frame::{DEFAULT_MAX_FRAME_BYTES, FrameError, decode_envelope, encode_envelope},
+        messages::{
+            AgentToPop, AuthRefresh, AuthRequest, AuthRequestPayload, AuthWithSessionToken,
+            ControlRequest, ControlResponse, Heartbeat, HeartbeatStats, PopToAgent, Shred,
+            ShredBatch, ShredId, ShredKind, StreamKind, VoteDatagram,
+        },
+    },
+    std::{
+        collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher},
+        hash::{Hash, Hasher},
+        io::Write,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        path::PathBuf,
+        sync::{
+            Arc, Once,
+            atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        },
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    },
+    thiserror::Error,
+    tokio::{
+        io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+        net::{TcpListener, TcpStream, UdpSocket},
+        sync::{mpsc, watch},
+    },
 };
 
 static GLOBAL: ArcSwapOption<SolanaCdnHandle> = ArcSwapOption::const_empty();
@@ -1147,10 +1152,8 @@ impl SolanaCdnHandle {
             return;
         }
         self.prune_vote_tunnel_allowed_dsts_if_needed(now);
-        self.vote_tunnel_allowed_dsts.insert(
-            dst,
-            now.saturating_add(VOTE_TUNNEL_ALLOWED_DST_TTL_MS),
-        );
+        self.vote_tunnel_allowed_dsts
+            .insert(dst, now.saturating_add(VOTE_TUNNEL_ALLOWED_DST_TTL_MS));
     }
 
     fn prune_vote_tunnel_allowed_dsts_if_needed(&self, now: u64) {
@@ -1923,14 +1926,16 @@ pub(crate) fn new_handle_for_tests(cfg: SolanaCdnConfig) -> Arc<SolanaCdnHandle>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use quinn::{crypto::rustls::QuicServerConfig, ServerConfig};
-    use solanacdn_protocol::messages::{
-        AuthError, AuthOk, ControlError, ControlRequest, ControlResponse, PopHeartbeatAck, PopInfo,
-        PopList, PopStatsSnapshot, RelayTransaction,
+    use {
+        super::*,
+        quinn::{ServerConfig, crypto::rustls::QuicServerConfig},
+        solana_tls_utils::{crypto_provider, new_dummy_x509_certificate},
+        solanacdn_protocol::messages::{
+            AuthError, AuthOk, ControlError, ControlRequest, ControlResponse, PopHeartbeatAck,
+            PopInfo, PopList, PopStatsSnapshot, RelayTransaction,
+        },
+        tempfile::NamedTempFile,
     };
-    use solana_tls_utils::{crypto_provider, new_dummy_x509_certificate};
-    use tempfile::NamedTempFile;
 
     fn encode_shortvec_len(mut value: usize) -> Vec<u8> {
         let mut out = Vec::new();
@@ -1947,11 +1952,7 @@ mod tests {
         out
     }
 
-    fn build_wire_tx(
-        program_id_index: u8,
-        keys: &[[u8; 32]],
-        versioned: bool,
-    ) -> Vec<u8> {
+    fn build_wire_tx(program_id_index: u8, keys: &[[u8; 32]], versioned: bool) -> Vec<u8> {
         let mut msg = Vec::new();
         if versioned {
             msg.push(0x80); // v0 prefix
@@ -1993,10 +1994,7 @@ mod tests {
         decode_envelope(&bytes).expect("decode agent msg")
     }
 
-    async fn write_pop_msg<W: AsyncWrite + Unpin>(
-        writer: &mut W,
-        msg: &PopToAgent,
-    ) {
+    async fn write_pop_msg<W: AsyncWrite + Unpin>(writer: &mut W, msg: &PopToAgent) {
         let bytes = encode_envelope(msg).expect("encode pop msg");
         write_len_prefixed(writer, &bytes)
             .await
@@ -2096,9 +2094,7 @@ mod tests {
             handle_metrics_conn(stream, server_handle).await;
         });
 
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("metrics connect");
+        let mut client = TcpStream::connect(addr).await.expect("metrics connect");
         client.write_all(request).await.expect("metrics write");
         let mut resp = Vec::new();
         client.read_to_end(&mut resp).await.expect("metrics read");
@@ -2106,9 +2102,7 @@ mod tests {
         String::from_utf8_lossy(&resp).to_string()
     }
 
-    async fn run_control_io(
-        resp: ControlResponse,
-    ) -> Result<Vec<SocketAddr>, SolanaCdnError> {
+    async fn run_control_io(resp: ControlResponse) -> Result<Vec<SocketAddr>, SolanaCdnError> {
         let (client, server) = tokio::io::duplex(1024);
         let server_task = tokio::spawn(async move {
             let (mut reader, mut writer) = tokio::io::split(server);
@@ -2129,10 +2123,18 @@ mod tests {
         std::env::var(key).ok()
     }
 
+    fn set_env(key: &str, value: impl AsRef<std::ffi::OsStr>) {
+        unsafe { std::env::set_var(key, value) }
+    }
+
+    fn remove_env(key: &str) {
+        unsafe { std::env::remove_var(key) }
+    }
+
     fn restore_env(key: &str, value: Option<String>) {
         match value {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
+            Some(v) => set_env(key, v),
+            None => remove_env(key),
         }
     }
 
@@ -2195,10 +2197,7 @@ mod tests {
         assert!(!handle.should_dedup_tx_sig(sig, now));
         handle.note_dedup_tx_sig(sig, now);
         assert!(handle.should_dedup_tx_sig(sig, now));
-        assert!(!handle.should_dedup_tx_sig(
-            sig,
-            now + TX_DEDUP_TTL_MS + 1
-        ));
+        assert!(!handle.should_dedup_tx_sig(sig, now + TX_DEDUP_TTL_MS + 1));
     }
 
     #[test]
@@ -2238,10 +2237,7 @@ mod tests {
     fn test_json_error_message() {
         assert_eq!(json_error_message(""), "empty response");
         assert_eq!(json_error_message("  "), "empty response");
-        assert_eq!(
-            json_error_message(r#"{"error":"bad token"}"#),
-            "bad token"
-        );
+        assert_eq!(json_error_message(r#"{"error":"bad token"}"#), "bad token");
         assert_eq!(json_error_message(r#"{"ok":true}"#), r#"{"ok":true}"#);
         assert_eq!(json_error_message("not json"), "not json");
     }
@@ -2250,13 +2246,13 @@ mod tests {
     fn test_env_trimmed_and_first_env() {
         let k1 = "SCDN_TEST_ENV_TRIMMED_1";
         let k2 = "SCDN_TEST_ENV_TRIMMED_2";
-        std::env::set_var(k1, "   ");
-        std::env::set_var(k2, "  value ");
+        set_env(k1, "   ");
+        set_env(k2, "  value ");
         assert_eq!(env_trimmed(k1), None);
         assert_eq!(env_trimmed(k2), Some("value".to_string()));
         assert_eq!(first_env(&[k1, k2]), Some("value".to_string()));
-        std::env::remove_var(k1);
-        std::env::remove_var(k2);
+        remove_env(k1);
+        remove_env(k2);
     }
 
     #[test]
@@ -2310,8 +2306,14 @@ mod tests {
         expected.insert(ep1, PubkeyBytes([1u8; 32]));
         expected.insert(ep2, PubkeyBytes([2u8; 32]));
         handle.note_pipe_pop_expected_pubkeys(&expected);
-        assert_eq!(handle.expected_pipe_pop_pubkey(ep1), Some(PubkeyBytes([1u8; 32])));
-        assert_eq!(handle.expected_pipe_pop_pubkey(ep2), Some(PubkeyBytes([2u8; 32])));
+        assert_eq!(
+            handle.expected_pipe_pop_pubkey(ep1),
+            Some(PubkeyBytes([1u8; 32]))
+        );
+        assert_eq!(
+            handle.expected_pipe_pop_pubkey(ep2),
+            Some(PubkeyBytes([2u8; 32]))
+        );
 
         handle.note_pipe_pop_expected_pubkeys(&HashMap::new());
         assert_eq!(handle.expected_pipe_pop_pubkey(ep1), None);
@@ -2427,7 +2429,9 @@ mod tests {
             let bytes = encode_envelope(&msg).unwrap();
             write_len_prefixed(&mut tx, &bytes).await.unwrap();
         });
-        let decoded = read_pop_msg(&mut rx, DEFAULT_MAX_FRAME_BYTES).await.unwrap();
+        let decoded = read_pop_msg(&mut rx, DEFAULT_MAX_FRAME_BYTES)
+            .await
+            .unwrap();
         match decoded {
             PopToAgent::DirectShredsProbe { pop_now_ms } => assert_eq!(pop_now_ms, 42),
             other => panic!("unexpected decoded msg: {other:?}"),
@@ -2476,13 +2480,12 @@ mod tests {
     fn test_note_solanacdn_shreds_rx_updates_slot() {
         let handle = new_handle_for_tests(SolanaCdnConfig::default());
         handle.note_solanacdn_shreds_rx(100, 2, Some(5));
-        assert_eq!(
-            handle.rx_shred_payloads.load(Ordering::Relaxed),
-            2
+        assert_eq!(handle.rx_shred_payloads.load(Ordering::Relaxed), 2);
+        assert!(
+            handle
+                .last_solanacdn_shred_slot_valid
+                .load(Ordering::Relaxed)
         );
-        assert!(handle
-            .last_solanacdn_shred_slot_valid
-            .load(Ordering::Relaxed));
         assert_eq!(handle.last_solanacdn_shred_slot.load(Ordering::Relaxed), 5);
 
         handle.note_solanacdn_shreds_rx(50, 1, Some(3));
@@ -2493,9 +2496,11 @@ mod tests {
     fn test_note_solanacdn_accepted_shred_with_slot_updates() {
         let handle = new_handle_for_tests(SolanaCdnConfig::default());
         handle.note_solanacdn_accepted_shred_with_slot(Some(10));
-        assert!(handle
-            .last_solanacdn_shred_accepted_slot_valid
-            .load(Ordering::Relaxed));
+        assert!(
+            handle
+                .last_solanacdn_shred_accepted_slot_valid
+                .load(Ordering::Relaxed)
+        );
         assert_eq!(
             handle
                 .last_solanacdn_shred_accepted_slot
@@ -2536,16 +2541,17 @@ mod tests {
         }
         assert_eq!(parse_hex_32(hex), Some(expected));
         assert!(parse_hex_32("abcd").is_none());
-        assert!(parse_hex_32("zz0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
-            .is_none());
+        assert!(
+            parse_hex_32("zz0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+                .is_none()
+        );
     }
 
     #[test]
     fn test_sha256_bytes() {
-        let expected = parse_hex_32(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-        )
-        .expect("hex");
+        let expected =
+            parse_hex_32("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+                .expect("hex");
         assert_eq!(sha256_bytes(b"abc"), expected);
     }
 
@@ -2695,10 +2701,11 @@ mod tests {
         assert_eq!(h.handle.pushed_shred_batches.load(Ordering::Relaxed), 1);
         assert_eq!(h.handle.rx_shred_payloads.load(Ordering::Relaxed), 2);
         assert_eq!(h.handle.rx_shred_bytes.load(Ordering::Relaxed), 6);
-        assert!(h
-            .handle
-            .last_solanacdn_shred_slot_valid
-            .load(Ordering::Relaxed));
+        assert!(
+            h.handle
+                .last_solanacdn_shred_slot_valid
+                .load(Ordering::Relaxed)
+        );
         assert_eq!(
             h.handle.last_solanacdn_shred_slot.load(Ordering::Relaxed),
             7
@@ -3101,10 +3108,7 @@ mod tests {
 
     #[test]
     fn test_prometheus_escape_label_value() {
-        assert_eq!(
-            prometheus_escape_label_value(r#"a"b\c"#),
-            r#"a\"b\\c"#
-        );
+        assert_eq!(prometheus_escape_label_value(r#"a"b\c"#), r#"a\"b\\c"#);
     }
 
     #[test]
@@ -3136,23 +3140,17 @@ mod tests {
         handle
             .publisher_endpoint
             .store(Some(Arc::new(ep.to_string())));
-        handle
-            .publisher_switches_total
-            .store(2, Ordering::Relaxed);
+        handle.publisher_switches_total.store(2, Ordering::Relaxed);
 
         handle.rx_shred_bytes.store(100, Ordering::Relaxed);
         handle.rx_shred_payloads.store(10, Ordering::Relaxed);
-        handle
-            .tunneled_vote_packets
-            .store(5, Ordering::Relaxed);
+        handle.tunneled_vote_packets.store(5, Ordering::Relaxed);
 
         let now = now_ms();
         handle
             .last_solanacdn_shred_rx_ms
             .store(now.saturating_sub(500), Ordering::Relaxed);
-        handle
-            .last_solanacdn_shred_slot
-            .store(9, Ordering::Relaxed);
+        handle.last_solanacdn_shred_slot.store(9, Ordering::Relaxed);
         handle
             .last_solanacdn_shred_slot_valid
             .store(true, Ordering::Relaxed);
@@ -3224,9 +3222,7 @@ mod tests {
         assert!(body.contains(
             "solanacdn_race_lead_seconds_quantile{winner=\"solanacdn\",quantile=\"0.50\"} 0"
         ));
-        assert!(body.contains(
-            "solanacdn_race_delta_seconds_quantile{quantile=\"0.50\"} 0"
-        ));
+        assert!(body.contains("solanacdn_race_delta_seconds_quantile{quantile=\"0.50\"} 0"));
     }
 
     #[tokio::test]
@@ -3285,24 +3281,15 @@ mod tests {
     fn test_init_skips_when_no_config() {
         let saved_agent = save_env("SOLANACDN_AGENT_API_TOKEN");
         let saved_pipe = save_env("PIPE_API_KEY");
-        std::env::remove_var("SOLANACDN_AGENT_API_TOKEN");
-        std::env::remove_var("PIPE_API_KEY");
+        remove_env("SOLANACDN_AGENT_API_TOKEN");
+        remove_env("PIPE_API_KEY");
 
         set_global_for_tests(None);
         let cfg = SolanaCdnConfig::default();
         let identity = Arc::new(Keypair::new());
         let exit = Arc::new(AtomicBool::new(false));
         let zero: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        init(
-            cfg,
-            identity,
-            exit,
-            false,
-            zero,
-            zero,
-            zero,
-            zero,
-        );
+        init(cfg, identity, exit, false, zero, zero, zero, zero);
         assert!(global().is_none());
 
         restore_env("SOLANACDN_AGENT_API_TOKEN", saved_agent);
@@ -3320,16 +3307,7 @@ mod tests {
         let identity = Arc::new(Keypair::new());
         let exit = Arc::new(AtomicBool::new(false));
         let zero: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        init(
-            cfg,
-            identity,
-            exit,
-            false,
-            zero,
-            zero,
-            zero,
-            zero,
-        );
+        init(cfg, identity, exit, false, zero, zero, zero, zero);
         assert!(global().is_none());
     }
 
@@ -3343,16 +3321,10 @@ mod tests {
         let ep: SocketAddr = "10.0.0.1:1111".parse().unwrap();
         handle.set_publisher_uplink(Some(ep), Some(uplink.clone()));
         assert!(handle.is_connected());
-        assert_eq!(
-            handle.publisher_switches_total.load(Ordering::Relaxed),
-            1
-        );
+        assert_eq!(handle.publisher_switches_total.load(Ordering::Relaxed), 1);
 
         handle.set_publisher_uplink(Some(ep), Some(uplink));
-        assert_eq!(
-            handle.publisher_switches_total.load(Ordering::Relaxed),
-            1
-        );
+        assert_eq!(handle.publisher_switches_total.load(Ordering::Relaxed), 1);
 
         handle.set_publisher_uplink(None, None);
         assert!(!handle.is_connected());
@@ -3398,10 +3370,7 @@ mod tests {
             select_publisher(Some(p1), &desired, &connected, true),
             Some(p1)
         );
-        assert_eq!(
-            select_publisher(None, &desired, &connected, true),
-            Some(p3)
-        );
+        assert_eq!(select_publisher(None, &desired, &connected, true), Some(p3));
 
         connected.insert(
             p2,
@@ -3542,8 +3511,7 @@ mod tests {
 
         let inject_tpu_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject tpu");
         let inject_tvu_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject tvu");
-        let inject_gossip_sock =
-            UdpSocket::bind("127.0.0.1:0").await.expect("inject gossip");
+        let inject_gossip_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject gossip");
         let inject_vote_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject vote");
         let inject_tpu = inject_tpu_sock.local_addr().expect("tpu addr");
         let inject_tvu = inject_tvu_sock.local_addr().expect("tvu addr");
@@ -3560,11 +3528,9 @@ mod tests {
         let quic_server_config =
             QuicServerConfig::try_from(server_tls).expect("quic server config");
         let server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        let server_endpoint = quinn::Endpoint::server(
-            server_config,
-            "127.0.0.1:0".parse().expect("server addr"),
-        )
-        .expect("server endpoint");
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().expect("server addr"))
+                .expect("server endpoint");
         let server_addr = server_endpoint.local_addr().expect("server local addr");
 
         let (_publisher_tx, publisher_rx) = watch::channel(Some(server_addr));
@@ -3706,19 +3672,14 @@ mod tests {
             .await
             .expect("send uplink vote");
 
-        let (published_shreds, published_votes) = tokio::time::timeout(
-            Duration::from_secs(5),
-            server_task,
-        )
-        .await
-        .expect("server timeout")
-        .expect("server join");
+        let (published_shreds, published_votes) =
+            tokio::time::timeout(Duration::from_secs(5), server_task)
+                .await
+                .expect("server timeout")
+                .expect("server join");
 
         assert_eq!(published_shreds.shreds.len(), 1);
-        assert_eq!(
-            published_shreds.shreds[0].payload,
-            b"uplink-shred".to_vec()
-        );
+        assert_eq!(published_shreds.shreds[0].payload, b"uplink-shred".to_vec());
         assert!(matches!(published_shreds.shreds[0].kind, ShredKind::Tvu));
 
         assert_eq!(published_votes.dst, inject_vote);
@@ -3765,8 +3726,7 @@ mod tests {
 
         let inject_tpu_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject tpu");
         let inject_tvu_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject tvu");
-        let inject_gossip_sock =
-            UdpSocket::bind("127.0.0.1:0").await.expect("inject gossip");
+        let inject_gossip_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject gossip");
         let inject_vote_sock = UdpSocket::bind("127.0.0.1:0").await.expect("inject vote");
         let inject_tpu = inject_tpu_sock.local_addr().expect("tpu addr");
         let inject_tvu = inject_tvu_sock.local_addr().expect("tvu addr");
@@ -3787,11 +3747,9 @@ mod tests {
         let quic_server_config =
             QuicServerConfig::try_from(server_tls).expect("quic server config");
         let server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        let server_endpoint = quinn::Endpoint::server(
-            server_config,
-            "127.0.0.1:0".parse().expect("server addr"),
-        )
-        .expect("server endpoint");
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().expect("server addr"))
+                .expect("server endpoint");
         let server_addr = server_endpoint.local_addr().expect("server local addr");
 
         let (publisher_tx, publisher_rx) = watch::channel(None);
@@ -3836,8 +3794,7 @@ mod tests {
                 other => panic!("unexpected shreds hello: {other:?}"),
             }
 
-            let (_votes_send, mut votes_recv) =
-                connection.accept_bi().await.expect("votes stream");
+            let (_votes_send, mut votes_recv) = connection.accept_bi().await.expect("votes stream");
             let hello = read_agent_msg(&mut votes_recv, VOTES_MAX_FRAME_BYTES).await;
             match hello {
                 AgentToPop::StreamHello(kind) => assert!(matches!(kind, StreamKind::Votes)),
@@ -3847,10 +3804,13 @@ mod tests {
             let mut udp_ports_tx = Some(udp_ports_tx);
             let ctrl_reader = tokio::spawn(async move {
                 loop {
-                    let bytes = match read_len_prefixed_with_limit(&mut ctrl_recv, CTRL_MAX_FRAME_BYTES).await {
-                        Ok(v) => v,
-                        Err(_) => return,
-                    };
+                    let bytes =
+                        match read_len_prefixed_with_limit(&mut ctrl_recv, CTRL_MAX_FRAME_BYTES)
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(_) => return,
+                        };
                     let msg: AgentToPop = match decode_envelope(&bytes) {
                         Ok(v) => v,
                         Err(_) => continue,
@@ -3914,13 +3874,11 @@ mod tests {
             .expect("run pop session");
         });
 
-        let (agent_shreds_port, agent_votes_port) = tokio::time::timeout(
-            Duration::from_secs(5),
-            udp_ports_rx,
-        )
-        .await
-        .expect("udp ports timeout")
-        .expect("udp ports recv");
+        let (agent_shreds_port, agent_votes_port) =
+            tokio::time::timeout(Duration::from_secs(5), udp_ports_rx)
+                .await
+                .expect("udp ports timeout")
+                .expect("udp ports recv");
 
         let mut register_false = 0usize;
         let mut register_true = 0usize;
@@ -3946,9 +3904,7 @@ mod tests {
         }
         assert!(register_false >= 1);
 
-        publisher_tx
-            .send(Some(server_addr))
-            .expect("publisher on");
+        publisher_tx.send(Some(server_addr)).expect("publisher on");
 
         let deadline = tokio::time::sleep(Duration::from_secs(5));
         tokio::pin!(deadline);
@@ -3974,19 +3930,21 @@ mod tests {
         assert!(saw_subscribe);
         assert!(register_true >= 1);
 
-        let downlink_shreds_sock =
-            UdpSocket::bind("127.0.0.1:0").await.expect("downlink shreds");
-        let downlink_votes_sock =
-            UdpSocket::bind("127.0.0.1:0").await.expect("downlink votes");
-        let agent_shreds_addr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), agent_shreds_port);
-        let agent_votes_addr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), agent_votes_port);
+        let downlink_shreds_sock = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("downlink shreds");
+        let downlink_votes_sock = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("downlink votes");
+        let agent_shreds_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), agent_shreds_port);
+        let agent_votes_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), agent_votes_port);
 
         let batch = make_single_shred_batch(ShredKind::Tvu, Bytes::from_static(b"udp-shred"));
-        let bytes =
-            solanacdn_protocol::udp::encode_udp_datagram(udp_token, &PopToAgent::PushShredBatch(batch))
-                .expect("encode udp shred");
+        let bytes = solanacdn_protocol::udp::encode_udp_datagram(
+            udp_token,
+            &PopToAgent::PushShredBatch(batch),
+        )
+        .expect("encode udp shred");
         downlink_shreds_sock
             .send_to(&bytes, agent_shreds_addr)
             .await
@@ -4001,9 +3959,11 @@ mod tests {
             dst: inject_vote,
             payload,
         };
-        let bytes =
-            solanacdn_protocol::udp::encode_udp_datagram(udp_token, &PopToAgent::PushVoteDatagram(dg))
-                .expect("encode udp vote");
+        let bytes = solanacdn_protocol::udp::encode_udp_datagram(
+            udp_token,
+            &PopToAgent::PushVoteDatagram(dg),
+        )
+        .expect("encode udp vote");
         downlink_votes_sock
             .send_to(&bytes, agent_votes_addr)
             .await
@@ -4026,13 +3986,10 @@ mod tests {
             .await
             .expect("send uplink vote");
 
-        let (_shred_msg, _vote_msg) = tokio::time::timeout(
-            Duration::from_secs(5),
-            uplink_seen_rx,
-        )
-        .await
-        .expect("uplink seen timeout")
-        .expect("uplink seen");
+        let (_shred_msg, _vote_msg) = tokio::time::timeout(Duration::from_secs(5), uplink_seen_rx)
+            .await
+            .expect("uplink seen timeout")
+            .expect("uplink seen");
 
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -4047,9 +4004,7 @@ mod tests {
         .await
         .expect("downlink metrics");
 
-        publisher_tx
-            .send(None)
-            .expect("publisher off");
+        publisher_tx.send(None).expect("publisher off");
         let deadline = tokio::time::sleep(Duration::from_secs(5));
         tokio::pin!(deadline);
         while !(saw_unsubscribe && register_false >= 2) {
@@ -4060,9 +4015,7 @@ mod tests {
                     match msg {
                         AgentToPop::UnsubscribeShreds => saw_unsubscribe = true,
                         AgentToPop::RegisterValidatorPorts { direct_shreds, .. } => {
-                            if direct_shreds {
-                                register_true += 1;
-                            } else {
+                            if !direct_shreds {
                                 register_false += 1;
                             }
                         }
@@ -4516,7 +4469,10 @@ async fn maybe_bootstrap_pop_tls_from_pipe_api(cfg: &mut SolanaCdnConfig) {
                 return;
             }
         } else {
-            warn!("solanacdn: POP TLS bootstrap returned invalid pop_ca_cert_sha256; skipping sha verification");
+            warn!(
+                "solanacdn: POP TLS bootstrap returned invalid pop_ca_cert_sha256; skipping sha \
+                 verification"
+            );
         }
     }
 
@@ -4727,7 +4683,8 @@ async fn pipe_api_verify(
                 Ok(a) => a,
                 Err(e) => {
                     warn!(
-                        "solanacdn: ignoring invalid pop_endpoint from Pipe API verify v2 ({}): {e}",
+                        "solanacdn: ignoring invalid pop_endpoint from Pipe API verify v2 ({}): \
+                         {e}",
                         pop.quic_endpoint
                     );
                     continue;
@@ -4743,7 +4700,8 @@ async fn pipe_api_verify(
                     Ok(pk) => Some(PubkeyBytes(pk.to_bytes())),
                     Err(e) => {
                         warn!(
-                            "solanacdn: ignoring invalid pop node_pubkey from Pipe API verify v2 ({b58}): {e}"
+                            "solanacdn: ignoring invalid pop node_pubkey from Pipe API verify v2 \
+                             ({b58}): {e}"
                         );
                         None
                     }
@@ -4767,7 +4725,11 @@ async fn pipe_api_verify(
             .into_iter()
             .map(|(addr, (id, pk))| (pop_assign_score(&req.validator_pubkey, &id), addr, id, pk))
             .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.cmp(&b.2)).then_with(|| a.1.cmp(&b.1)));
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.1.cmp(&b.1))
+        });
         if scored.len() > PIPE_API_VERIFY_MAX_POP_ENDPOINTS {
             scored.truncate(PIPE_API_VERIFY_MAX_POP_ENDPOINTS);
         }
@@ -4786,7 +4748,9 @@ async fn pipe_api_verify(
             match s.parse::<SocketAddr>() {
                 Ok(addr) => candidates.push((s.trim().to_string(), addr)),
                 Err(e) => {
-                    warn!("solanacdn: ignoring invalid pop_endpoint from Pipe API verify ({s}): {e}");
+                    warn!(
+                        "solanacdn: ignoring invalid pop_endpoint from Pipe API verify ({s}): {e}"
+                    );
                 }
             }
         }
@@ -4794,7 +4758,9 @@ async fn pipe_api_verify(
         candidates.sort_by(|(a_raw, a_addr), (b_raw, b_addr)| {
             let sa = pop_assign_score(&req.validator_pubkey, a_raw);
             let sb = pop_assign_score(&req.validator_pubkey, b_raw);
-            sb.cmp(&sa).then_with(|| a_raw.cmp(b_raw)).then_with(|| a_addr.cmp(b_addr))
+            sb.cmp(&sa)
+                .then_with(|| a_raw.cmp(b_raw))
+                .then_with(|| a_addr.cmp(b_addr))
         });
         if candidates.len() > PIPE_API_VERIFY_MAX_POP_ENDPOINTS {
             candidates.truncate(PIPE_API_VERIFY_MAX_POP_ENDPOINTS);
@@ -5697,7 +5663,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
         status.rx_shred_payloads_total
     ));
 
-    out.push_str("# HELP solanacdn_shred_batches_dropped_oversized_total PushShredBatch messages dropped due to oversized shred count\n");
+    out.push_str(
+        "# HELP solanacdn_shred_batches_dropped_oversized_total PushShredBatch messages dropped \
+         due to oversized shred count\n",
+    );
     out.push_str("# TYPE solanacdn_shred_batches_dropped_oversized_total counter\n");
     out.push_str(&format!(
         "solanacdn_shred_batches_dropped_oversized_total {}\n",
@@ -5734,77 +5703,110 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
         status.rx_vote_packets_total
     ));
 
-    out.push_str("# HELP solanacdn_dropped_vote_datagrams_total Total vote datagrams dropped (deduped or failed injection)\n");
+    out.push_str(
+        "# HELP solanacdn_dropped_vote_datagrams_total Total vote datagrams dropped (deduped or \
+         failed injection)\n",
+    );
     out.push_str("# TYPE solanacdn_dropped_vote_datagrams_total counter\n");
     out.push_str(&format!(
         "solanacdn_dropped_vote_datagrams_total {}\n",
         status.dropped_vote_datagrams_total
     ));
 
-    out.push_str("# HELP solanacdn_vote_tunnel_dropped_oversized_payload_total Vote datagrams dropped due to oversized payloads\n");
+    out.push_str(
+        "# HELP solanacdn_vote_tunnel_dropped_oversized_payload_total Vote datagrams dropped due \
+         to oversized payloads\n",
+    );
     out.push_str("# TYPE solanacdn_vote_tunnel_dropped_oversized_payload_total counter\n");
     out.push_str(&format!(
         "solanacdn_vote_tunnel_dropped_oversized_payload_total {}\n",
         status.dropped_vote_datagrams_oversized_payload_total
     ));
 
-    out.push_str("# HELP solanacdn_vote_tunnel_dropped_invalid_payload_total Vote datagrams dropped due to invalid payloads (not a vote transaction)\n");
+    out.push_str(
+        "# HELP solanacdn_vote_tunnel_dropped_invalid_payload_total Vote datagrams dropped due to \
+         invalid payloads (not a vote transaction)\n",
+    );
     out.push_str("# TYPE solanacdn_vote_tunnel_dropped_invalid_payload_total counter\n");
     out.push_str(&format!(
         "solanacdn_vote_tunnel_dropped_invalid_payload_total {}\n",
         status.dropped_vote_datagrams_invalid_payload_total
     ));
 
-    out.push_str("# HELP solanacdn_vote_tunnel_dropped_unexpected_dst_total Vote datagrams dropped due to unexpected destinations\n");
+    out.push_str(
+        "# HELP solanacdn_vote_tunnel_dropped_unexpected_dst_total Vote datagrams dropped due to \
+         unexpected destinations\n",
+    );
     out.push_str("# TYPE solanacdn_vote_tunnel_dropped_unexpected_dst_total counter\n");
     out.push_str(&format!(
         "solanacdn_vote_tunnel_dropped_unexpected_dst_total {}\n",
         status.dropped_vote_datagrams_unexpected_dst_total
     ));
 
-    out.push_str("# HELP solanacdn_vote_tunnel_allowed_dsts_len Number of currently allowed vote tunnel destinations\n");
+    out.push_str(
+        "# HELP solanacdn_vote_tunnel_allowed_dsts_len Number of currently allowed vote tunnel \
+         destinations\n",
+    );
     out.push_str("# TYPE solanacdn_vote_tunnel_allowed_dsts_len gauge\n");
     out.push_str(&format!(
         "solanacdn_vote_tunnel_allowed_dsts_len {}\n",
         status.vote_tunnel_allowed_dsts_len
     ));
 
-    out.push_str("# HELP solanacdn_quic_shreds_dropped_unexpected_msg_total Shreds stream frames dropped due to unexpected message types\n");
+    out.push_str(
+        "# HELP solanacdn_quic_shreds_dropped_unexpected_msg_total Shreds stream frames dropped \
+         due to unexpected message types\n",
+    );
     out.push_str("# TYPE solanacdn_quic_shreds_dropped_unexpected_msg_total counter\n");
     out.push_str(&format!(
         "solanacdn_quic_shreds_dropped_unexpected_msg_total {}\n",
         status.dropped_quic_shreds_unexpected_msg_total
     ));
 
-    out.push_str("# HELP solanacdn_quic_votes_dropped_unexpected_msg_total Votes stream frames dropped due to unexpected message types\n");
+    out.push_str(
+        "# HELP solanacdn_quic_votes_dropped_unexpected_msg_total Votes stream frames dropped due \
+         to unexpected message types\n",
+    );
     out.push_str("# TYPE solanacdn_quic_votes_dropped_unexpected_msg_total counter\n");
     out.push_str(&format!(
         "solanacdn_quic_votes_dropped_unexpected_msg_total {}\n",
         status.dropped_quic_votes_unexpected_msg_total
     ));
 
-    out.push_str("# HELP solanacdn_udp_shreds_dropped_unexpected_peer_total UDP shred datagrams dropped due to unexpected peer IP\n");
+    out.push_str(
+        "# HELP solanacdn_udp_shreds_dropped_unexpected_peer_total UDP shred datagrams dropped \
+         due to unexpected peer IP\n",
+    );
     out.push_str("# TYPE solanacdn_udp_shreds_dropped_unexpected_peer_total counter\n");
     out.push_str(&format!(
         "solanacdn_udp_shreds_dropped_unexpected_peer_total {}\n",
         status.dropped_udp_shreds_unexpected_peer_total
     ));
 
-    out.push_str("# HELP solanacdn_udp_shreds_dropped_unexpected_msg_total UDP shred datagrams dropped due to unexpected message types\n");
+    out.push_str(
+        "# HELP solanacdn_udp_shreds_dropped_unexpected_msg_total UDP shred datagrams dropped due \
+         to unexpected message types\n",
+    );
     out.push_str("# TYPE solanacdn_udp_shreds_dropped_unexpected_msg_total counter\n");
     out.push_str(&format!(
         "solanacdn_udp_shreds_dropped_unexpected_msg_total {}\n",
         status.dropped_udp_shreds_unexpected_msg_total
     ));
 
-    out.push_str("# HELP solanacdn_udp_votes_dropped_unexpected_peer_total UDP vote datagrams dropped due to unexpected peer IP\n");
+    out.push_str(
+        "# HELP solanacdn_udp_votes_dropped_unexpected_peer_total UDP vote datagrams dropped due \
+         to unexpected peer IP\n",
+    );
     out.push_str("# TYPE solanacdn_udp_votes_dropped_unexpected_peer_total counter\n");
     out.push_str(&format!(
         "solanacdn_udp_votes_dropped_unexpected_peer_total {}\n",
         status.dropped_udp_votes_unexpected_peer_total
     ));
 
-    out.push_str("# HELP solanacdn_udp_votes_dropped_unexpected_msg_total UDP vote datagrams dropped due to unexpected message types\n");
+    out.push_str(
+        "# HELP solanacdn_udp_votes_dropped_unexpected_msg_total UDP vote datagrams dropped due \
+         to unexpected message types\n",
+    );
     out.push_str("# TYPE solanacdn_udp_votes_dropped_unexpected_msg_total counter\n");
     out.push_str(&format!(
         "solanacdn_udp_votes_dropped_unexpected_msg_total {}\n",
@@ -5812,7 +5814,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
     ));
 
     if let Some(slot) = status.last_shred_slot {
-        out.push_str("# HELP solanacdn_last_shred_slot Last Solana slot observed from POP-delivered shreds\n");
+        out.push_str(
+            "# HELP solanacdn_last_shred_slot Last Solana slot observed from POP-delivered \
+             shreds\n",
+        );
         out.push_str("# TYPE solanacdn_last_shred_slot gauge\n");
         out.push_str(&format!("solanacdn_last_shred_slot {}\n", slot));
     }
@@ -5826,12 +5831,18 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
     }
 
     if let Some(slot) = status.last_accepted_shred_slot {
-        out.push_str("# HELP solanacdn_last_accepted_shred_slot Last Solana slot observed from SolanaCDN shreds accepted into the validator pipeline\n");
+        out.push_str(
+            "# HELP solanacdn_last_accepted_shred_slot Last Solana slot observed from SolanaCDN \
+             shreds accepted into the validator pipeline\n",
+        );
         out.push_str("# TYPE solanacdn_last_accepted_shred_slot gauge\n");
         out.push_str(&format!("solanacdn_last_accepted_shred_slot {}\n", slot));
     }
     if let Some(age_ms) = status.last_accepted_shred_age_ms {
-        out.push_str("# HELP solanacdn_last_accepted_shred_age_seconds Age of last SolanaCDN shred accepted into the validator pipeline\n");
+        out.push_str(
+            "# HELP solanacdn_last_accepted_shred_age_seconds Age of last SolanaCDN shred \
+             accepted into the validator pipeline\n",
+        );
         out.push_str("# TYPE solanacdn_last_accepted_shred_age_seconds gauge\n");
         out.push_str(&format!(
             "solanacdn_last_accepted_shred_age_seconds {}\n",
@@ -5870,7 +5881,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
     out.push_str("# TYPE solanacdn_race_inflight gauge\n");
     out.push_str(&format!("solanacdn_race_inflight {}\n", race.inflight));
 
-    out.push_str("# HELP solanacdn_race_pairs_total Number of shreds observed on both sources within the race window\n");
+    out.push_str(
+        "# HELP solanacdn_race_pairs_total Number of shreds observed on both sources within the \
+         race window\n",
+    );
     out.push_str("# TYPE solanacdn_race_pairs_total counter\n");
     out.push_str(&format!(
         "solanacdn_race_pairs_total {}\n",
@@ -5890,7 +5904,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
         race.wins_gossip_total
     ));
 
-    out.push_str("# HELP solanacdn_race_ties_total Number of observed pairs with identical first-seen timestamps\n");
+    out.push_str(
+        "# HELP solanacdn_race_ties_total Number of observed pairs with identical first-seen \
+         timestamps\n",
+    );
     out.push_str("# TYPE solanacdn_race_ties_total counter\n");
     out.push_str(&format!("solanacdn_race_ties_total {}\n", race.ties_total));
 
@@ -5937,7 +5954,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             ));
         }
 
-        out.push_str("# HELP solanacdn_race_lead_seconds_quantile Approximate lead-time quantiles (derived from histogram buckets)\n");
+        out.push_str(
+            "# HELP solanacdn_race_lead_seconds_quantile Approximate lead-time quantiles (derived \
+             from histogram buckets)\n",
+        );
         out.push_str("# TYPE solanacdn_race_lead_seconds_quantile gauge\n");
         let lead_bounds_ms: [i64; RACE_LEAD_BUCKETS_MS.len()] =
             std::array::from_fn(|i| RACE_LEAD_BUCKETS_MS[i] as i64);
@@ -5965,7 +5985,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             }
         }
 
-        out.push_str("# HELP solanacdn_race_delta_seconds Signed delta between first-seen times (solanacdn_first - gossip_first); negative means SolanaCDN arrived first\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds Signed delta between first-seen times \
+             (solanacdn_first - gossip_first); negative means SolanaCDN arrived first\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds histogram\n");
         for (i, bound_ms) in RACE_DELTA_BUCKETS_MS.iter().enumerate() {
             let le = (*bound_ms as f64) / 1000.0;
@@ -5987,7 +6010,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             hist.delta_count
         ));
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_quantile Approximate signed-delta quantiles (derived from histogram buckets)\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_quantile Approximate signed-delta quantiles \
+             (derived from histogram buckets)\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_quantile gauge\n");
         for (q_label, q) in [("0.50", 0.50), ("0.95", 0.95), ("0.99", 0.99)] {
             let value = histogram_quantile_seconds(
@@ -6004,19 +6030,28 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             ));
         }
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_by_pop_endpoint Signed delta segmented by SolanaCDN POP endpoint\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_by_pop_endpoint Signed delta segmented by \
+             SolanaCDN POP endpoint\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_by_pop_endpoint histogram\n");
         for (ep, seg) in &hist.delta_by_pop_endpoint {
             let ep = prometheus_escape_label_value(&ep.to_string());
             for (i, bound_ms) in RACE_DELTA_BUCKETS_MS.iter().enumerate() {
                 let le = (*bound_ms as f64) / 1000.0;
                 out.push_str(&format!(
-                    "solanacdn_race_delta_seconds_by_pop_endpoint_bucket{{pop_endpoint=\"{}\",le=\"{:.3}\"}} {}\n",
+                    concat!(
+                        "solanacdn_race_delta_seconds_by_pop_endpoint_bucket",
+                        "{{pop_endpoint=\"{}\",le=\"{:.3}\"}} {}\n"
+                    ),
                     ep, le, seg.bucket_counts[i]
                 ));
             }
             out.push_str(&format!(
-                "solanacdn_race_delta_seconds_by_pop_endpoint_bucket{{pop_endpoint=\"{}\",le=\"+Inf\"}} {}\n",
+                concat!(
+                    "solanacdn_race_delta_seconds_by_pop_endpoint_bucket",
+                    "{{pop_endpoint=\"{}\",le=\"+Inf\"}} {}\n"
+                ),
                 ep, seg.count
             ));
             out.push_str(&format!(
@@ -6030,19 +6065,28 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             ));
         }
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_by_hour_utc Signed delta segmented by UTC hour-of-day (00-23)\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_by_hour_utc Signed delta segmented by UTC \
+             hour-of-day (00-23)\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_by_hour_utc histogram\n");
         for (hour, seg) in hist.delta_by_hour_utc.iter().enumerate() {
             let hour_label = format!("{hour:02}");
             for (i, bound_ms) in RACE_DELTA_BUCKETS_MS.iter().enumerate() {
                 let le = (*bound_ms as f64) / 1000.0;
                 out.push_str(&format!(
-                    "solanacdn_race_delta_seconds_by_hour_utc_bucket{{hour_utc=\"{}\",le=\"{:.3}\"}} {}\n",
+                    concat!(
+                        "solanacdn_race_delta_seconds_by_hour_utc_bucket",
+                        "{{hour_utc=\"{}\",le=\"{:.3}\"}} {}\n"
+                    ),
                     hour_label, le, seg.bucket_counts[i]
                 ));
             }
             out.push_str(&format!(
-                "solanacdn_race_delta_seconds_by_hour_utc_bucket{{hour_utc=\"{}\",le=\"+Inf\"}} {}\n",
+                concat!(
+                    "solanacdn_race_delta_seconds_by_hour_utc_bucket",
+                    "{{hour_utc=\"{}\",le=\"+Inf\"}} {}\n"
+                ),
                 hour_label, seg.count
             ));
             out.push_str(&format!(
@@ -6078,7 +6122,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             ));
         }
 
-        out.push_str("# HELP solanacdn_race_lead_seconds_quantile Approximate lead-time quantiles (derived from histogram buckets)\n");
+        out.push_str(
+            "# HELP solanacdn_race_lead_seconds_quantile Approximate lead-time quantiles (derived \
+             from histogram buckets)\n",
+        );
         out.push_str("# TYPE solanacdn_race_lead_seconds_quantile gauge\n");
         for winner_label in ["solanacdn", "gossip"] {
             for q_label in ["0.50", "0.95", "0.99"] {
@@ -6089,7 +6136,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             }
         }
 
-        out.push_str("# HELP solanacdn_race_delta_seconds Signed delta between first-seen times (solanacdn_first - gossip_first); negative means SolanaCDN arrived first\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds Signed delta between first-seen times \
+             (solanacdn_first - gossip_first); negative means SolanaCDN arrived first\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds histogram\n");
         for bound_ms in RACE_DELTA_BUCKETS_MS {
             let le = (bound_ms as f64) / 1000.0;
@@ -6102,7 +6152,10 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
         out.push_str("solanacdn_race_delta_seconds_sum 0\n");
         out.push_str("solanacdn_race_delta_seconds_count 0\n");
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_quantile Approximate signed-delta quantiles (derived from histogram buckets)\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_quantile Approximate signed-delta quantiles \
+             (derived from histogram buckets)\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_quantile gauge\n");
         for q_label in ["0.50", "0.95", "0.99"] {
             out.push_str(&format!(
@@ -6111,10 +6164,16 @@ fn format_prometheus_metrics(handle: &SolanaCdnHandle) -> String {
             ));
         }
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_by_pop_endpoint Signed delta segmented by SolanaCDN POP endpoint\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_by_pop_endpoint Signed delta segmented by \
+             SolanaCDN POP endpoint\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_by_pop_endpoint histogram\n");
 
-        out.push_str("# HELP solanacdn_race_delta_seconds_by_hour_utc Signed delta segmented by UTC hour-of-day (00-23)\n");
+        out.push_str(
+            "# HELP solanacdn_race_delta_seconds_by_hour_utc Signed delta segmented by UTC \
+             hour-of-day (00-23)\n",
+        );
         out.push_str("# TYPE solanacdn_race_delta_seconds_by_hour_utc histogram\n");
     }
 
@@ -6128,7 +6187,8 @@ async fn write_http_response(
     body: &[u8],
 ) {
     let headers = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: \
+         close\r\n\r\n",
         body.len()
     );
     let _ = stream.write_all(headers.as_bytes()).await;
@@ -6841,7 +6901,10 @@ async fn run_pop_session(
         PopToAgent::AuthError(err) => {
             if err.message.contains("missing pipe session token") {
                 warn!(
-                    "solanacdn: POP requires a Pipe session token. Set --solanacdn-api-token (or env SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY). If running with --solanacdn-only/--solanacdn-hybrid, the validator will not receive POP shreds until a token is configured."
+                    "solanacdn: POP requires a Pipe session token. Set --solanacdn-api-token (or \
+                     env SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY). If running with \
+                     --solanacdn-only/--solanacdn-hybrid, the validator will not receive POP \
+                     shreds until a token is configured."
                 );
             }
             return Err(SolanaCdnError::AuthFailed(format!(
@@ -6852,7 +6915,7 @@ async fn run_pop_session(
         other => {
             return Err(SolanaCdnError::AuthFailed(format!(
                 "unexpected auth response: {other:?}"
-            )))
+            )));
         }
     };
     let pop_pubkey = auth_ok.pop_pubkey;
@@ -6864,11 +6927,15 @@ async fn run_pop_session(
             match cfg.pop_pubkey_pinning {
                 PopPubkeyPinningMode::Off => {}
                 PopPubkeyPinningMode::Warn => {
-                    warn!("solanacdn: POP pubkey mismatch for {endpoint}: expected={expected_b58} actual={actual_b58} (continuing)");
+                    warn!(
+                        "solanacdn: POP pubkey mismatch for {endpoint}: expected={expected_b58} \
+                         actual={actual_b58} (continuing)"
+                    );
                 }
                 PopPubkeyPinningMode::Enforce => {
                     return Err(SolanaCdnError::AuthFailed(format!(
-                        "POP pubkey mismatch for {endpoint}: expected={expected_b58} actual={actual_b58}"
+                        "POP pubkey mismatch for {endpoint}: expected={expected_b58} \
+                         actual={actual_b58}"
                     )));
                 }
             }

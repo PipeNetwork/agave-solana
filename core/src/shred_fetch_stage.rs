@@ -510,17 +510,17 @@ mod tests {
         super::*,
         crate::{
             repair::serve_repair::ShredRepairType,
-            solanacdn::{new_handle_for_tests, set_global_for_tests, SolanaCdnConfig},
-        },
-        solana_ledger::{
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            shred::Shredder,
+            solanacdn::{SolanaCdnConfig, new_handle_for_tests, set_global_for_tests},
         },
         solana_gossip::contact_info::ContactInfo,
-        solana_perf::packet::PinnedPacketBatch,
+        solana_ledger::{
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            shred::Shredder,
+        },
+        solana_net_utils::SocketAddrSpace,
+        solana_perf::packet::RecycledPacketBatch,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
@@ -546,8 +546,11 @@ mod tests {
 
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
-        let cluster_info =
-            Arc::new(ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            contact_info,
+            keypair,
+            SocketAddrSpace::Unspecified,
+        ));
         let repair_socket = match UdpSocket::bind("127.0.0.1:0") {
             Ok(sock) => Arc::new(sock),
             Err(err) => {
@@ -575,7 +578,7 @@ mod tests {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234);
         packet.meta_mut().set_socket_addr(&addr);
-        let batch = PacketBatch::from(PinnedPacketBatch::new(vec![packet]));
+        let batch = PacketBatch::from(RecycledPacketBatch::new(vec![packet]));
 
         let (input_tx, input_rx) = unbounded();
         let (sendr, output_rx) = EvictingSender::new_bounded(1);
@@ -599,12 +602,7 @@ mod tests {
         drop(input_tx);
 
         let out_batch = output_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        let discard = out_batch
-            .iter()
-            .next()
-            .expect("packet")
-            .meta()
-            .discard();
+        let discard = out_batch.iter().next().expect("packet").meta().discard();
 
         handle_thread.join().unwrap();
         Some(discard)

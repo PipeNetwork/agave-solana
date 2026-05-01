@@ -143,12 +143,14 @@ impl FromClapArgMatches for RunArgs {
         if (matches.is_present("solanacdn_only")
             || matches.is_present("solanacdn_hybrid")
             || solanacdn_race_requested
-            || matches.is_present("solanacdn_no_repair")
-        )
+            || matches.is_present("solanacdn_no_repair"))
             && !has_solanacdn_discovery
         {
             return Err(clap::Error::with_description(
-                "SolanaCDN requested but no POP endpoints, control endpoint, or API token configured. Set --solanacdn-api-token (or env SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY), or provide --solanacdn-pop/--solanacdn-control.",
+                "SolanaCDN requested but no POP endpoints, control endpoint, or API token \
+                 configured. Set --solanacdn-api-token (or env \
+                 SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY), or provide \
+                 --solanacdn-pop/--solanacdn-control.",
                 clap::ErrorKind::MissingRequiredArgument,
             )
             .into());
@@ -159,7 +161,8 @@ impl FromClapArgMatches for RunArgs {
             && !has_solanacdn_control
         {
             return Err(clap::Error::with_description(
-                "--solanacdn-api-base requires an API token (use --solanacdn-api-token or env SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY)",
+                "--solanacdn-api-base requires an API token (use --solanacdn-api-token or env \
+                 SOLANACDN_AGENT_API_TOKEN/PIPE_API_KEY)",
                 clap::ErrorKind::MissingRequiredArgument,
             )
             .into());
@@ -186,7 +189,8 @@ impl FromClapArgMatches for RunArgs {
 fn validate_solanacdn_socket_addr(value: String, arg: &str) -> std::result::Result<(), String> {
     if value.contains("://") {
         return Err(format!(
-            "{arg} expects IP:PORT. For https://... control-plane discovery use --solanacdn-api-base"
+            "{arg} expects IP:PORT. For https://... control-plane discovery use \
+             --solanacdn-api-base"
         ));
     }
     value
@@ -1751,7 +1755,11 @@ mod tests {
         let default_run_args = RunArgs::default();
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args.clone(),
-            vec!["--solanacdn-api-token", "pk_test_dummy", "--solanacdn-hybrid"],
+            vec![
+                "--solanacdn-api-token",
+                "pk_test_dummy",
+                "--solanacdn-hybrid",
+            ],
             default_run_args,
         );
     }

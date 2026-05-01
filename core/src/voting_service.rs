@@ -147,9 +147,7 @@ impl VotingService {
 
         if !upcoming_leader_sockets.is_empty() {
             let solanacdn = crate::solanacdn::global();
-            let use_solanacdn = solanacdn
-                .as_ref()
-                .is_some_and(|h| h.vote_tunnel_enabled())
+            let use_solanacdn = solanacdn.as_ref().is_some_and(|h| h.vote_tunnel_enabled())
                 && matches!(
                     connection_cache.protocol(),
                     solana_client::connection_cache::Protocol::UDP

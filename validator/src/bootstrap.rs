@@ -7,8 +7,7 @@ use {
     log::*,
     rand::{rng, seq::SliceRandom},
     rayon::prelude::*,
-    reqwest::Url,
-    reqwest::blocking::Client as HttpClient,
+    reqwest::{Url, blocking::Client as HttpClient},
     serde::Deserialize,
     serde_json::Value as JsonValue,
     solana_account::ReadableAccount,
@@ -199,7 +198,8 @@ fn bootstrap_rpc_peers_from_config(
                     Ok(mut fetched) => addrs.append(&mut fetched),
                     Err(err) => {
                         warn!(
-                            "bootstrap rpc addrs url fetch failed; falling back to gossip discovery: {err}"
+                            "bootstrap rpc addrs url fetch failed; falling back to gossip \
+                             discovery: {err}"
                         );
                     }
                 }
@@ -1250,7 +1250,8 @@ fn parse_incremental_snapshot_from_manifest(
             .map_err(|e| e.to_string())?;
     if base_slot != entry.base_slot || slot != entry.slot {
         return Err(format!(
-            "snapshot manifest mismatch: filename base_slot {base_slot} slot {slot} != fields base_slot {} slot {} ({})",
+            "snapshot manifest mismatch: filename base_slot {base_slot} slot {slot} != fields \
+             base_slot {} slot {} ({})",
             entry.base_slot, entry.slot, entry.filename
         ));
     }
@@ -1582,7 +1583,8 @@ fn download_snapshots(
         };
         if snapshot_hash != manifest_hash {
             warn!(
-                "Snapshot service selection differs from bootstrap snapshot hash. Using manifest. bootstrap={snapshot_hash:?} manifest={manifest_hash:?}"
+                "Snapshot service selection differs from bootstrap snapshot hash. Using manifest. \
+                 bootstrap={snapshot_hash:?} manifest={manifest_hash:?}"
             );
         }
     }
@@ -1772,9 +1774,10 @@ fn should_use_local_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::net::TcpListener;
-    use std::sync::atomic::AtomicUsize;
+    use {
+        super::*,
+        std::{net::TcpListener, sync::atomic::AtomicUsize},
+    };
 
     impl PeerSnapshotHash {
         fn new(
@@ -1974,7 +1977,8 @@ mod tests {
                 let end: usize = end_s.parse().unwrap();
                 let slice = &content_server[start..=end];
                 let header = format!(
-                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nConnection: \
+                     close\r\n\r\n",
                     slice.len()
                 );
                 stream.write_all(header.as_bytes()).unwrap();
@@ -2100,7 +2104,8 @@ mod tests {
 
             let slice = &content[start..=end];
             let header = format!(
-                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes \
+                 {}-{}/{}\r\nConnection: close\r\n\r\n",
                 slice.len(),
                 start,
                 end,

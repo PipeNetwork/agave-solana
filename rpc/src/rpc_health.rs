@@ -102,8 +102,8 @@ impl RpcHealth {
             warn!(
                 "health check: behind by {num_slots} slots: \
                  me={my_latest_optimistically_confirmed_slot}, latest \
-                 cluster={cluster_latest_optimistically_confirmed_slot}, \
-                 blockstore max_root={blockstore_max_root}, highest_slot={blockstore_highest_slot:?}",
+                 cluster={cluster_latest_optimistically_confirmed_slot}, blockstore \
+                 max_root={blockstore_max_root}, highest_slot={blockstore_highest_slot:?}",
             );
             RpcHealthStatus::Behind { num_slots }
         }
